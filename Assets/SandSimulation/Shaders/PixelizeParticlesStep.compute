@@ -1,0 +1,111 @@
+#pragma kernel Clear
+#pragma kernel BlitStepResults
+#pragma kernel FillRChannel
+#pragma kernel FillGChannel
+#pragma kernel FillBChannel
+#pragma kernel FillAChannel
+
+#include "SandUtils.cginc"
+
+StructuredBuffer<uint4> _SandIds;
+StructuredBuffer<float4> _SandSimPositions;
+RWStructuredBuffer<float4> _SandDebugValues;
+
+RWStructuredBuffer<int4> _ParticlesInCellsTemp;
+
+// Result
+RWStructuredBuffer<int4> _ParticlesInCells; // xyzw - indices of 4 particles in _SandIds buffer
+
+bool IsDefaultIdAtIndex(int index)
+{
+    return _SandIds[index].x == _DefaultSandId;
+}
+
+uint2 ToCellIndex(float2 simPos)
+{
+    return simPos / _SandCellSize;
+}
+
+[numthreads(8,8,1)]
+void Clear (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id);
+    _ParticlesInCells[index] = -1;
+    _ParticlesInCellsTemp[index] = -1;
+}
+
+[numthreads(8,8,1)]
+void BlitStepResults (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id.xy);
+    const int4 indicesTemp = _ParticlesInCellsTemp[index];
+    _ParticlesInCells[index] = indicesTemp;
+}
+
+[numthreads(8,8,1)]
+void FillRChannel (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id.xy);
+    if (IsDefaultIdAtIndex(index)) return;
+
+    const int gridCellIndex = ToPlaneIndex(ToCellIndex(_SandSimPositions[index].xy));
+    int4 indices = _ParticlesInCells[gridCellIndex];
+    
+    if (indices.r == -1)
+    {
+        int4 tempIndices = _ParticlesInCellsTemp[gridCellIndex];
+        tempIndices.r = index;
+        _ParticlesInCellsTemp[gridCellIndex] = tempIndices;
+    }
+}
+
+[numthreads(8,8,1)]
+void FillGChannel (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id.xy);
+    if (IsDefaultIdAtIndex(index)) return;
+
+    const int gridCellIndex = ToPlaneIndex(ToCellIndex(_SandSimPositions[index].xy));
+    int4 indices = _ParticlesInCells[gridCellIndex];
+    
+    if (indices.g == -1 && indices.r != index)
+    {
+        int4 tempIndices = _ParticlesInCellsTemp[gridCellIndex];
+        tempIndices.g = index;
+        _ParticlesInCellsTemp[gridCellIndex] = tempIndices;
+    }
+}
+
+[numthreads(8,8,1)]
+void FillBChannel (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id.xy);
+    if (IsDefaultIdAtIndex(index)) return;
+
+    const int gridCellIndex = ToPlaneIndex(ToCellIndex(_SandSimPositions[index].xy));
+    int4 indices = _ParticlesInCells[gridCellIndex];
+    
+    if (indices.b == -1 && indices.r != index && indices.g != index)
+    {
+        int4 tempIndices = _ParticlesInCellsTemp[gridCellIndex];
+        tempIndices.b = index;
+        _ParticlesInCellsTemp[gridCellIndex] = tempIndices;
+    }
+}
+
+[numthreads(8,8,1)]
+void FillAChannel (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id.xy);
+    if (IsDefaultIdAtIndex(index)) return;
+
+    const int gridCellIndex = ToPlaneIndex(ToCellIndex(_SandSimPositions[index].xy));
+    int4 indices = _ParticlesInCells[gridCellIndex];
+    
+    if (indices.a == -1 && indices.r != index && indices.g != index && indices.b != index)
+    {
+        int4 tempIndices = _ParticlesInCellsTemp[gridCellIndex];
+        tempIndices.a = index;
+        _ParticlesInCellsTemp[gridCellIndex] = tempIndices;
+    }
+}

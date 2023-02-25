@@ -1,0 +1,148 @@
+#pragma kernel ComputeForces
+#pragma kernel ApplyForces
+#include "SandUtils.cginc"
+#include "CellConfig.cginc"
+
+float _Spring;
+float _Damping;
+float _DeltaTime;
+float4 _Gravity;
+
+StructuredBuffer<uint4> _SandIds;
+StructuredBuffer<int4> _ParticlesInCells;
+StructuredBuffer<CellConfig> CellDatabase;
+
+RWStructuredBuffer<float4> _SandSimPositions;
+RWStructuredBuffer<float4> _SandVelocities;
+RWStructuredBuffer<float4> _SandForces;
+
+bool IsDefaultIdAtIndex(int index)
+{
+    return _SandIds[index].x == _DefaultSandId;
+}
+
+uint2 ToCellIndex(float2 simPos)
+{
+    return simPos / _SandCellSize;
+}
+
+bool IsStaticParticle(int index)
+{
+    return CellDatabase[_SandIds[index].x].id.y != 0;
+}
+
+float2 CalculateRepulsiveForce(float2 simPos, float2 otherSimPos)
+{
+    const float diameter = _SandParticleSize;
+    const float2 relativePos = otherSimPos - simPos;
+    const float relativePosLength = length(relativePos);
+    return -_Spring * (diameter - relativePosLength) * (relativePos/relativePosLength);
+}
+
+float2 CalculateDampingForce(float2 velocity, float2 otherVelocity)
+{
+    const float2 relativeVelocity = otherVelocity - velocity;
+    const float2 damp = _Damping * relativeVelocity;
+    return clamp(damp, 0, relativeVelocity * 2);
+}
+
+bool isColliding(float2 posA, float2 posB)
+{
+    return SqrLength(posA - posB) <= GetParticleDiameterSqr();
+}
+
+float2 CalculateSumForce(float2 simPos, float2 otherSimPos, float2 velocity, float2 otherVelocity)
+{
+    if (!isColliding(simPos, otherSimPos)) return 0;
+    return CalculateRepulsiveForce(simPos, otherSimPos) + CalculateDampingForce(velocity, otherVelocity);
+}
+
+float2 CalculateSumForce(int selfIndex, int otherIndex)
+{
+    if (otherIndex < 0 || selfIndex == otherIndex) return 0;
+    
+    const float2 simPos = _SandSimPositions[selfIndex].xy;
+    const float2 otherSimPos = _SandSimPositions[otherIndex].xy;
+    const float2 velocity = _SandVelocities[selfIndex].xy;
+    const float2 otherVelocity = _SandVelocities[otherIndex].xy;
+    return CalculateSumForce(simPos, otherSimPos, velocity, otherVelocity);
+}
+
+[numthreads(8,8,1)]
+void ComputeForces (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id);
+    if (IsDefaultIdAtIndex(index) || IsStaticParticle(index)) return;
+
+    const float4 simPos = _SandSimPositions[index];
+    const uint2 pixelCoord = ToCellIndex(simPos);
+    float4 force = _SandForces[index];
+    float2 appliedForce = 0;
+
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            const int2 otherPixelCoord = pixelCoord + int2(x ,y);
+            
+            if (IsInBounds(otherPixelCoord))
+            {
+                int4 otherIndices = _ParticlesInCells[ToPlaneIndex(otherPixelCoord)];
+                appliedForce += CalculateSumForce(index, otherIndices.r);
+                appliedForce += CalculateSumForce(index, otherIndices.g);
+                appliedForce += CalculateSumForce(index, otherIndices.b);
+                appliedForce += CalculateSumForce(index, otherIndices.a);
+            }
+            else
+            {
+                const float radius = GetParticleRadius();
+                const float2 minSimPos = 1 + radius;
+                const float2 maxSimPos = GetGridSizeFloat() - 1 - radius;
+                float2 boundingForce = 0;
+                
+                if (simPos.x <= minSimPos.x)
+                {
+                    boundingForce += float2(minSimPos.x - simPos.x, 0) / _DeltaTime;
+                }
+
+                if (simPos.y <= minSimPos.y)
+                {
+                    boundingForce += float2(0, minSimPos.y - simPos.y) / _DeltaTime;
+                }
+
+                if (simPos.x >= maxSimPos.x)
+                {
+                    boundingForce += float2(maxSimPos.x - simPos.x, 0) / _DeltaTime;
+                }
+
+                if (simPos.y >= maxSimPos.y)
+                {
+                    boundingForce += float2(0, maxSimPos.y - simPos.y) / _DeltaTime;
+                }
+
+                appliedForce += boundingForce + CalculateDampingForce(_SandVelocities[index], 0);
+            }
+        }
+    }
+
+    appliedForce += _Gravity.xy;
+    force.xy = appliedForce;
+    _SandForces[index] = force;
+}
+
+[numthreads(8,8,1)]
+void ApplyForces (uint3 id : SV_DispatchThreadID)
+{
+    const uint index = ToPlaneIndex(id);
+    if (IsDefaultIdAtIndex(index) || IsStaticParticle(index)) return;
+
+    float4 simPos = _SandSimPositions[index];
+    float4 velocity = _SandVelocities[index];
+    const float4 force = _SandForces[index];
+
+    velocity.xy += force.xy * _DeltaTime;
+    simPos.xy += velocity.xy * _DeltaTime;
+
+    _SandSimPositions[index] = simPos;
+    _SandVelocities[index] = velocity;
+}

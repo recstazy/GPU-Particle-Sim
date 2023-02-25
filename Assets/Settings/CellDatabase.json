@@ -1,0 +1,1 @@
+{"_defaultConfig":{"_id":0,"_isStatic":true,"_textureOffset":{"x":0.0,"y":0.0},"_name":"None"},"_configs":[{"_id":1,"_isStatic":true,"_textureOffset":{"x":32.0,"y":32.0},"_name":"Wall"},{"_id":2,"_isStatic":false,"_textureOffset":{"x":16.0,"y":16.0},"_name":"Particle"},{"_id":3,"_isStatic":false,"_textureOffset":{"x":0.0,"y":0.0},"_name":"Particle"}]}
